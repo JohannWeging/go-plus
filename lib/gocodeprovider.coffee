@@ -1,3 +1,4 @@
+{Range}  = require "atom"
 _ = require 'underscore-plus'
 path = require 'path'
 
@@ -6,6 +7,10 @@ ProviderClass: (Provider, Suggestion, dispatch)  ->
 
   class GocodeProvider extends Provider
     exclusive: true
+
+    initialize: ->
+      if atom.packages.isPackageLoaded("snippets")
+        @snippets = atom.packages.getLoadedPackage("snippets").mainModule
 
     buildSuggestions: () ->
       return unless dispatch?.isValidEditor(@editor)
@@ -49,6 +54,46 @@ ProviderClass: (Provider, Suggestion, dispatch)  ->
       return if messages?.length < 1
       return messages
 
+    confirm: (suggestion) ->
+      @replaceTextWithMatch(suggestion)
+      @editor.getCursors().forEach (cursor) =>
+        setTimeout(=>
+          @snippets.insert(suggestion.word)
+        , 1)
+      return false
+
+    generateSignature: (type) ->
+      signature = ""
+      skipBlank = false
+      parenCounter = 0
+      paramCount = 1
+      for char, index in type.split ''
+        if skipBlank
+          skipBlank = false
+          continue
+        if char == "("
+          parenCounter++
+          signature += "(${" + paramCount + ":"
+          paramCount++
+        else if char == ")"
+          parenCounter--
+          signature += "})"
+        else if parenCounter > 0 && char == ","
+          signature += "}, ${" + paramCount + ":"
+          paramCount++
+          skipBlank = true
+        else if parenCounter > 0
+          signature += char
+      return signature
+
+    replaceTextWithMatch: (match) ->
+      selection = @editor.getSelection()
+      startPosition = selection.getBufferRange().start
+      buffer = @editor.getBuffer()
+      # Replace the prefix with the new word
+      cursorPosition = @editor.getCursorBufferPosition()
+      buffer.delete(Range.fromPointWithDelta(cursorPosition, 0, -match.prefix.length))
+
     mapMessages: (data, text, index) ->
       return [] unless data?
       res = JSON.parse(data)
@@ -57,13 +102,12 @@ ProviderClass: (Provider, Suggestion, dispatch)  ->
       candidates = res[1]
 
       return [] unless candidates
-
       suggestions = []
       for c in candidates
         prefix = c.name.substring 0, numPrefix
         word = c.name
-        word += '(' if c.class is 'func' and text[index] != '('
-        label = c.type or c.class
+        word += @generateSignature(c.type)  if c.class is 'func'
+        label = c.class
         suggestions.push new Suggestion(this, word: word, prefix: prefix, label: label)
 
       return suggestions
